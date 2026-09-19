@@ -114,6 +114,7 @@ class SessionTestPeer : testing::TestPeer<Session> {
   PEER_METHOD(AttachCachedLiveConversionSuggestionCandidateWindow);
   PEER_METHOD(OutputZenzLiveCorrection);
   PEER_METHOD(ApplyZenzLiveCorrectionResult);
+  PEER_METHOD(RevertZenzLiveCorrectionToNormalConversion);
 
   PEER_VARIABLE(context_);
   PEER_VARIABLE(undo_contexts_);
@@ -130,6 +131,7 @@ class SessionTestPeer : testing::TestPeer<Session> {
   PEER_VARIABLE(zenz_live_key_);
   PEER_VARIABLE(zenz_live_value_);
   PEER_VARIABLE(zenz_live_mozc_value_);
+  PEER_VARIABLE(zenz_live_mozc_preedit_output_);
   PEER_VARIABLE(zenz_live_context_class_);
   PEER_VARIABLE(zenz_feedback_store_);
   PEER_VARIABLE(pending_zenz_feedback_);
@@ -3147,6 +3149,55 @@ TEST_F(SessionTest,
   EXPECT_FALSE(command.output().zenz_live_correction_pending());
   EXPECT_TRUE(command.output().zenz_live_correction_applied());
   EXPECT_PREEDIT("今日", command);
+}
+
+TEST_F(SessionTest, SpaceRevertUsesFullMozcPreeditFromZenzRequest) {
+  MockEngine engine;
+  Session session(engine);
+  SessionTestPeer session_peer(session);
+  InitSessionToPrecomposition(&session);
+
+  session_peer.context_()->set_state(ImeContext::CONVERSION);
+  session_peer.live_conversion_active_() = true;
+  session_peer.live_conversion_key_() = "きょうははれ";
+  session_peer.live_conversion_value_() = "今日は晴れです";
+  session_peer.zenz_live_visible_generation_() = 1;
+  session_peer.zenz_live_key_() = "きょうははれ";
+  session_peer.zenz_live_value_() = "今日は晴れです";
+  session_peer.zenz_live_mozc_value_() = "今日は晴れ";
+
+  // This is the current full Mozc conversion captured when the Zenz request
+  // was made.  The live preedit, however, still represents the older AI
+  // prefix that would previously overwrite this snapshot.
+  commands::Preedit& mozc_preedit =
+      session_peer.zenz_live_mozc_preedit_output_();
+  mozc_preedit.Clear();
+  commands::Preedit::Segment* first_segment = mozc_preedit.add_segment();
+  first_segment->set_key("きょうは");
+  first_segment->set_value("今日は");
+  first_segment->set_value_length(Util::CharsLen("今日は"));
+  commands::Preedit::Segment* second_segment = mozc_preedit.add_segment();
+  second_segment->set_key("はれ");
+  second_segment->set_value("晴れ");
+  second_segment->set_value_length(Util::CharsLen("晴れ"));
+
+  commands::Preedit& stale_preedit =
+      session_peer.live_conversion_preedit_output_();
+  stale_preedit.Clear();
+  commands::Preedit::Segment* stale_segment = stale_preedit.add_segment();
+  stale_segment->set_key("きょう");
+  stale_segment->set_value("今日");
+  stale_segment->set_value_length(Util::CharsLen("今日"));
+
+  commands::Command command;
+  ASSERT_TRUE(session_peer.OutputZenzLiveCorrection("今日は晴れです", &command));
+  ASSERT_TRUE(session_peer.RevertZenzLiveCorrectionToNormalConversion(
+      &command));
+
+  EXPECT_PREEDIT("今日は晴れ", command);
+  ASSERT_EQ(command.output().preedit().segment_size(), 2);
+  EXPECT_EQ(command.output().preedit().segment(0).value(), "今日は");
+  EXPECT_EQ(command.output().preedit().segment(1).value(), "晴れ");
 }
 
 TEST_F(SessionTest,

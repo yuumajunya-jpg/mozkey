@@ -4489,6 +4489,11 @@ bool Session::MaybeStartLiveConversion(commands::Command* command) {
       mozc_value = context_->composer().GetStringForSubmission();
     }
 
+    // Keep the exact Mozc output associated with this Zenz request.  The
+    // previous live-conversion preedit may be an older AI result with a
+    // shorter prefix, so it must not be used for Space-to-Mozc restoration.
+    zenz_live_mozc_preedit_output_ = mozc_preedit_output;
+
     live_conversion_protected_spans_ = BuildZenzProtectedConversionSpans(
         context_->converter(), mozc_command.output(), live_conversion_key,
         mozc_value);
@@ -6517,8 +6522,11 @@ bool Session::OutputZenzLiveCorrection(
   // Do not record acceptance here. Displaying a zenz correction is not the same
   // as user acceptance. Acceptance must be recorded only when the user commits
   // the visible zenz result.
-  // Save Mozc preedit before updating live_conversion_ with Zenz result
-  if (live_conversion_preedit_output_.segment_size() > 0) {
+  // Some legacy/direct callers do not have a Mozc snapshot.  In that case,
+  // preserve the former fallback behavior, but never overwrite the exact
+  // Mozc output captured for the active Zenz request with an older AI preedit.
+  if (zenz_live_mozc_preedit_output_.segment_size() == 0 &&
+      live_conversion_preedit_output_.segment_size() > 0) {
     zenz_live_mozc_preedit_output_ = live_conversion_preedit_output_;
   }
 
