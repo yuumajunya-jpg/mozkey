@@ -6087,6 +6087,18 @@ bool Session::OutputCurrentLiveConversionAfterZenzStop(
 bool Session::OutputFallbackLiveConversionAfterZenzReject(
     commands::Command* command,
     absl::string_view debug) {
+  // Keep the current conversion snapshot before cancelling the request.
+  // CancelPendingZenzLiveCorrection clears pending_zenz_live_, but the next
+  // keystroke still needs this key/preedit pair to append its raw suffix to
+  // the fallback result.  Reading it after cancellation leaves
+  // live_conversion_key_ empty, which makes OutputPendingLiveConversion fall
+  // back to the entire raw hiragana composition.
+  const std::string fallback_key = pending_zenz_live_.key;
+  const std::string fallback_preedit =
+      pending_zenz_live_.symbol_style_source.empty()
+          ? fallback_key
+          : pending_zenz_live_.symbol_style_source;
+
   CancelPendingZenzLiveCorrection();
   Output(command);
 
@@ -6105,7 +6117,8 @@ bool Session::OutputFallbackLiveConversionAfterZenzReject(
     live_conversion_preedit_output_.Clear();
     live_conversion_value_ = context_->composer().GetStringForSubmission();
   }
-  live_conversion_key_ = pending_zenz_live_.key;
+  live_conversion_key_ = fallback_key;
+  live_conversion_preedit_ = fallback_preedit;
 
   commands::Output* output = command->mutable_output();
   output->set_live_conversion(true);

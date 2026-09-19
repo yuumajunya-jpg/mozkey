@@ -3225,6 +3225,65 @@ TEST_F(SessionTest,
   EXPECT_PREEDIT("今日は晴れ", command);
 }
 
+TEST_F(SessionTest,
+       ZenzFallbackPreservesStablePrefixForSubsequentKeystrokes) {
+  MockEngine engine;
+  std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
+
+  Session session(engine);
+  SessionTestPeer session_peer(session);
+  InitSessionToPrecomposition(&session);
+
+  config::Config config;
+  config::ConfigHandler::GetDefaultConfig(&config);
+  config.set_use_live_conversion(true);
+  config.set_live_conversion_delay_msec(0);
+  config.set_live_conversion_min_key_length(2);
+  config.set_use_zenz_live_correction(true);
+  config.set_zenz_live_correction_delay_msec(0);
+  config.set_zenz_live_correction_min_key_length(2);
+  config.set_zenz_live_correction_pipe_name("");
+  session.SetConfig(config);
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("きょうは");
+  converter::Candidate* candidate = segment->add_candidate();
+  candidate->key = "きょうは";
+  candidate->content_key = "きょうは";
+  candidate->value = "今日は";
+
+  EXPECT_CALL(*converter, StartConversion(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly(DoAll(SetArgPointee<1>(segments), Return(true)));
+
+  commands::Command command;
+  InsertCharacterString("きょうは", "kyoh", &session, &command);
+  ASSERT_EQ(session.context().state(), ImeContext::CONVERSION);
+
+  // Simulate a rejected response for the current conversion.  The fallback
+  // must retain this snapshot after it cancels pending_zenz_live_.
+  auto& pending_zenz_live = session_peer.pending_zenz_live_();
+  pending_zenz_live.key = "きょうは";
+  pending_zenz_live.symbol_style_source = "きょうは";
+  pending_zenz_live.mozc_value = "今日は";
+
+  ZenzLiveResponse rejected_response;
+  rejected_response.ok = false;
+  command.Clear();
+  ASSERT_TRUE(session_peer.ApplyZenzLiveCorrectionResult(rejected_response,
+                                                          &command));
+  EXPECT_EQ(session_peer.live_conversion_key_(), "きょうは");
+  EXPECT_EQ(session_peer.live_conversion_preedit_(), "きょうは");
+  EXPECT_EQ(session_peer.live_conversion_value_(), "今日は");
+
+  // A following character must append to the fallback result instead of
+  // reverting to the raw hiragana composition ("きょうはh").
+  command.Clear();
+  EXPECT_TRUE(SendKey("h", &session, &command));
+  EXPECT_PREEDIT("今日はh", command);
+}
+
 TEST_F(SessionTest, LiveConversionHonorsRaisedMinKeyLength) {
   MockEngine engine;
   std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
