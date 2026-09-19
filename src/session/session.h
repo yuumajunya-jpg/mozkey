@@ -436,6 +436,7 @@ class Session {
   std::string zenz_live_context_class_;
   std::string zenz_live_left_context_;
   commands::Preedit zenz_live_preedit_output_;
+  commands::Preedit zenz_live_mozc_preedit_output_;
 
   ZenzContextAssembler zenz_context_assembler_;
   ZenzContextSanitizer zenz_context_sanitizer_;
@@ -595,7 +596,19 @@ class Session {
   // zenz live correction.
   bool MaybeApplyZenzFeedbackLiveCorrection(
       mozc::commands::Command* command);
+  bool MaybeApplyZenzFeedbackLiveCorrectionInternal(
+      const std::string& key,
+      const std::string& preedit,
+      const std::string& mozc_value,
+      const mozc::commands::Preedit& mozc_preedit,
+      mozc::commands::Command* command);
   bool MaybeScheduleZenzLiveCorrection(mozc::commands::Command* command);
+  bool ScheduleZenzLiveCorrectionInternal(
+      const std::string& key,
+      const std::string& preedit,
+      const std::string& mozc_value,
+      bool start_immediately,
+      mozc::commands::Command* command);
   void AttachZenzLiveCorrectionStartCallback(
       mozc::commands::Command* command) const;
   void AttachZenzLiveCorrectionPollCallback(
@@ -609,6 +622,9 @@ class Session {
   bool OutputCurrentLiveConversionWithZenzPending(
       mozc::commands::Command* command);
   bool OutputCurrentLiveConversionAfterZenzStop(
+      mozc::commands::Command* command,
+      absl::string_view debug);
+  bool OutputFallbackLiveConversionAfterZenzReject(
       mozc::commands::Command* command,
       absl::string_view debug);
   ZenzLiveCorrector* EnsureZenzLiveCorrector();

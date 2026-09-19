@@ -112,6 +112,8 @@ class SessionTestPeer : testing::TestPeer<Session> {
   PEER_METHOD(OutputPendingLiveConversion);
   PEER_METHOD(AttachLiveConversionSuggestionCandidateWindow);
   PEER_METHOD(AttachCachedLiveConversionSuggestionCandidateWindow);
+  PEER_METHOD(OutputZenzLiveCorrection);
+  PEER_METHOD(ApplyZenzLiveCorrectionResult);
 
   PEER_VARIABLE(context_);
   PEER_VARIABLE(undo_contexts_);
@@ -132,6 +134,7 @@ class SessionTestPeer : testing::TestPeer<Session> {
   PEER_VARIABLE(zenz_feedback_store_);
   PEER_VARIABLE(pending_zenz_feedback_);
   PEER_VARIABLE(pending_direct_commit_learning_);
+  PEER_VARIABLE(pending_zenz_live_);
 };
 
 namespace {
@@ -2995,7 +2998,7 @@ TEST_F(SessionTest,
 }
 
 TEST_F(SessionTest,
-       ZenzLiveCorrectionPositiveDelaySchedulesStartCallback) {
+       ZenzLiveCorrectionPositiveDelayStartsImmediatelyWithoutShowingNormalConversion) {
   MockEngine engine;
   std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
 
@@ -3029,16 +3032,17 @@ TEST_F(SessionTest,
 
   EXPECT_EQ(session.context().state(), ImeContext::CONVERSION);
   EXPECT_TRUE(command.output().live_conversion());
-  EXPECT_FALSE(command.output().live_conversion_pending());
+  EXPECT_TRUE(command.output().live_conversion_pending());
   EXPECT_TRUE(command.output().zenz_live_correction_pending());
-  EXPECT_TRUE(EnsurePreedit("愛", command));
+  // Mozc normal conversion ("愛") is NOT shown. Raw pending preedit is displayed.
+  EXPECT_TRUE(EnsurePreedit("あい", command));
 
   ASSERT_TRUE(command.output().has_callback());
   ASSERT_TRUE(command.output().callback().has_session_command());
   EXPECT_EQ(command.output().callback().session_command().type(),
             commands::SessionCommand::APPLY_ZENZ_LIVE_CORRECTION);
   ASSERT_TRUE(command.output().callback().has_delay_millisec());
-  EXPECT_EQ(command.output().callback().delay_millisec(), 1);
+  EXPECT_EQ(command.output().callback().delay_millisec(), 24);
 }
 
 TEST_F(SessionTest,
@@ -3077,9 +3081,9 @@ TEST_F(SessionTest,
 
   EXPECT_EQ(session.context().state(), ImeContext::CONVERSION);
   EXPECT_TRUE(command.output().live_conversion());
-  EXPECT_FALSE(command.output().live_conversion_pending());
+  EXPECT_TRUE(command.output().live_conversion_pending());
   EXPECT_TRUE(command.output().zenz_live_correction_pending());
-  EXPECT_TRUE(EnsurePreedit("愛", command));
+  EXPECT_TRUE(EnsurePreedit("あい", command));
 
   ASSERT_TRUE(command.output().has_callback());
   ASSERT_TRUE(command.output().callback().has_session_command());
@@ -3089,6 +3093,136 @@ TEST_F(SessionTest,
   // Zero-delay Zenz correction should not emit a rounded start callback.
   // It starts the request immediately and emits the first poll callback.
   EXPECT_EQ(command.output().callback().delay_millisec(), 24);
+}
+
+TEST_F(SessionTest,
+       ZenzLiveConversionDisplaysZenzDirectlyWithoutMozcNormalConversion) {
+  MockEngine engine;
+  std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
+
+  Session session(engine);
+  SessionTestPeer session_peer(session);
+  InitSessionToPrecomposition(&session);
+
+  config::Config config;
+  config::ConfigHandler::GetDefaultConfig(&config);
+  config.set_use_live_conversion(true);
+  config.set_live_conversion_delay_msec(0);
+  config.set_live_conversion_min_key_length(2);
+  config.set_use_zenz_live_correction(true);
+  config.set_zenz_live_correction_delay_msec(0);
+  config.set_zenz_live_correction_min_key_length(2);
+  config.set_zenz_live_correction_pipe_name("");
+  session.SetConfig(config);
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("きょう");
+  converter::Candidate* candidate = segment->add_candidate();
+  candidate->key = "きょう";
+  candidate->content_key = "きょう";
+  candidate->value = "凶";  // Mozc's first candidate
+
+  EXPECT_CALL(*converter, StartConversion(_, _))
+      .Times(1)
+      .WillOnce(DoAll(SetArgPointee<1>(segments), Return(true)));
+
+  commands::Command command;
+  InsertCharacterString("きょう", "kyo", &session, &command);
+
+  // Requirement 1: Mozc 1st candidate "凶" is NEVER displayed.
+  // Hiragana "きょう" is displayed pending while Zenz prediction is in flight.
+  EXPECT_EQ(session.context().state(), ImeContext::CONVERSION);
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_TRUE(command.output().live_conversion_pending());
+  EXPECT_TRUE(command.output().zenz_live_correction_pending());
+  EXPECT_TRUE(EnsurePreedit("きょう", command));
+
+  // Now AI (Zenz) returns "今日".
+  ASSERT_TRUE(session_peer.OutputZenzLiveCorrection("今日", &command));
+
+  // Zenz result is displayed directly!
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_FALSE(command.output().live_conversion_pending());
+  EXPECT_FALSE(command.output().zenz_live_correction_pending());
+  EXPECT_TRUE(command.output().zenz_live_correction_applied());
+  EXPECT_PREEDIT("今日", command);
+}
+
+TEST_F(SessionTest,
+       SubsequentKeystrokesPreservePreviousZenzResultAndAppendInputs) {
+  MockEngine engine;
+  std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
+
+  Session session(engine);
+  SessionTestPeer session_peer(session);
+  InitSessionToPrecomposition(&session);
+
+  config::Config config;
+  config::ConfigHandler::GetDefaultConfig(&config);
+  config.set_use_live_conversion(true);
+  config.set_live_conversion_delay_msec(50);
+  config.set_live_conversion_min_key_length(2);
+  config.set_use_zenz_live_correction(true);
+  config.set_zenz_live_correction_delay_msec(0);
+  config.set_zenz_live_correction_min_key_length(2);
+  config.set_zenz_live_correction_pipe_name("");
+  session.SetConfig(config);
+
+  // 1. Initial typing of "きょう"
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("きょう");
+  converter::Candidate* candidate = segment->add_candidate();
+  candidate->key = "きょう";
+  candidate->content_key = "きょう";
+  candidate->value = "教";
+
+  EXPECT_CALL(*converter, StartConversion(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly(DoAll(SetArgPointee<1>(segments), Return(true)));
+
+  commands::Command command;
+  InsertCharacterString("きょう", "kyo", &session, &command);
+
+  // Simulate Zenz completion: "今日" is displayed.
+  ASSERT_TRUE(session_peer.OutputZenzLiveCorrection("今日", &command));
+  EXPECT_PREEDIT("今日", command);
+  EXPECT_EQ(session_peer.live_conversion_value_(), "今日");
+  EXPECT_EQ(session_peer.zenz_live_value_(), "今日");
+
+  // 2. Requirement 2: User continues typing 'h':
+  command.Clear();
+  EXPECT_TRUE(SendKey("h", &session, &command));
+  // The previous AI conversion "今日" is PRESERVED, and 'h' is appended -> "今日h"
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_TRUE(command.output().live_conversion_pending());
+  EXPECT_PREEDIT("今日h", command);
+
+  // 3. Requirement 2: User continues typing 'a':
+  command.Clear();
+  EXPECT_TRUE(SendKey("a", &session, &command));
+  // The display becomes "今日は"
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_TRUE(command.output().live_conversion_pending());
+  EXPECT_PREEDIT("今日は", command);
+
+  // 4. After debounce elapsed, live conversion triggers:
+  command.Clear();
+  EXPECT_TRUE(session_peer.MaybeStartLiveConversion(&command));
+  // Under Zenz live correction, it keeps "今日は" pending and schedules Zenz
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_TRUE(command.output().live_conversion_pending());
+  EXPECT_TRUE(command.output().zenz_live_correction_pending());
+  EXPECT_PREEDIT("今日は", command);
+
+  // 5. New Zenz prediction result arrives: "今日は晴れ"
+  command.Clear();
+  ASSERT_TRUE(session_peer.OutputZenzLiveCorrection("今日は晴れ", &command));
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_FALSE(command.output().live_conversion_pending());
+  EXPECT_TRUE(command.output().zenz_live_correction_applied());
+  EXPECT_PREEDIT("今日は晴れ", command);
 }
 
 TEST_F(SessionTest, LiveConversionHonorsRaisedMinKeyLength) {

@@ -1,8 +1,8 @@
 name: CI for Android
 # https://github.com/google/mozc/blob/master/docs/build_mozc_for_android.md
 
-# Run on push.
-on: push
+# Run manually only.
+on: workflow_dispatch
 
 permissions:
   contents: read

@@ -1,8 +1,10 @@
 name: CI for Windows
 # https://github.com/google/mozc/blob/master/docs/build_mozc_in_windows.md
 
-# Run on push.
-on: push
+# Run on push and manual trigger.
+on:
+  push:
+  workflow_dispatch:
 
 permissions:
   contents: read
