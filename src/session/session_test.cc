@@ -3284,6 +3284,55 @@ TEST_F(SessionTest,
   EXPECT_PREEDIT("今日はh", command);
 }
 
+TEST_F(SessionTest, BackspaceShowsRawPreeditUntilNextZenzConversion) {
+  MockEngine engine;
+  std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
+
+  Session session(engine);
+  SessionTestPeer session_peer(session);
+  InitSessionToPrecomposition(&session);
+
+  config::Config config;
+  config::ConfigHandler::GetDefaultConfig(&config);
+  config.set_use_live_conversion(true);
+  config.set_live_conversion_delay_msec(0);
+  config.set_live_conversion_min_key_length(2);
+  config.set_use_zenz_live_correction(true);
+  config.set_zenz_live_correction_delay_msec(0);
+  config.set_zenz_live_correction_min_key_length(2);
+  config.set_zenz_live_correction_pipe_name("");
+  session.SetConfig(config);
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("きょう");
+  converter::Candidate* candidate = segment->add_candidate();
+  candidate->key = "きょう";
+  candidate->content_key = "きょう";
+  candidate->value = "凶";
+
+  EXPECT_CALL(*converter, StartConversion(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly(DoAll(SetArgPointee<1>(segments), Return(true)));
+
+  commands::Command command;
+  InsertCharacterString("きょう", "kyo", &session, &command);
+  ASSERT_TRUE(session_peer.OutputZenzLiveCorrection("今日", &command));
+  EXPECT_PREEDIT("今日", command);
+
+  command.Clear();
+  EXPECT_TRUE(SendKey("Backspace", &session, &command));
+
+  // The next Zenz request has started, but the corrected text must not remain
+  // as a prefix while the user is deciding whether to delete more characters.
+  EXPECT_TRUE(command.output().live_conversion());
+  EXPECT_TRUE(command.output().live_conversion_pending());
+  EXPECT_TRUE(command.output().zenz_live_correction_pending());
+  EXPECT_PREEDIT("きょ", command);
+  EXPECT_TRUE(session_peer.live_conversion_key_().empty());
+  EXPECT_TRUE(session_peer.live_conversion_preedit_().empty());
+}
+
 TEST_F(SessionTest, LiveConversionHonorsRaisedMinKeyLength) {
   MockEngine engine;
   std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);

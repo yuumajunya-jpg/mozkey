@@ -8363,6 +8363,11 @@ bool Session::Backspace(commands::Command* command) {
 
   command->mutable_output()->set_consumed(true);
   CancelLiveConversionForEditing();
+  // A deletion changes the user's intended reading.  Do not retain the prior
+  // live-conversion or Zenz result as a stable prefix: until the replacement
+  // AI conversion arrives, show the remaining composition entirely as raw
+  // hiragana so the user can see exactly which characters are being edited.
+  ClearLiveConversionState();
   context_->mutable_composer()->Backspace();
   ClearUndoContext();
   if (context_->mutable_composer()->Empty()) {
