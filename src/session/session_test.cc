@@ -3284,7 +3284,7 @@ TEST_F(SessionTest,
   EXPECT_PREEDIT("今日はh", command);
 }
 
-TEST_F(SessionTest, BackspaceShowsRawPreeditUntilNextZenzConversion) {
+TEST_F(SessionTest, BackspaceShowsRawPreeditDuringLiveConversionDebounce) {
   MockEngine engine;
   std::shared_ptr<MockConverter> converter = CreateEngineConverterMock(&engine);
 
@@ -3320,17 +3320,32 @@ TEST_F(SessionTest, BackspaceShowsRawPreeditUntilNextZenzConversion) {
   ASSERT_TRUE(session_peer.OutputZenzLiveCorrection("今日", &command));
   EXPECT_PREEDIT("今日", command);
 
+  // The initial conversion is immediate only to prepare a visible AI result.
+  // Backspace must then follow the configured live-conversion debounce.
+  config.set_live_conversion_delay_msec(50);
+  session.SetConfig(config);
+  Mock::VerifyAndClearExpectations(converter.get());
+  EXPECT_CALL(*converter, StartConversion(_, _)).Times(0);
+
   command.Clear();
   EXPECT_TRUE(SendKey("Backspace", &session, &command));
 
-  // The next Zenz request has started, but the corrected text must not remain
-  // as a prefix while the user is deciding whether to delete more characters.
+  // The corrected text must not remain as a prefix while the user is deciding
+  // whether to delete more characters.  The next conversion has not started
+  // yet; it is scheduled using the normal live-conversion debounce.
   EXPECT_TRUE(command.output().live_conversion());
   EXPECT_TRUE(command.output().live_conversion_pending());
-  EXPECT_TRUE(command.output().zenz_live_correction_pending());
+  EXPECT_FALSE(command.output().zenz_live_correction_pending());
   EXPECT_PREEDIT("きょ", command);
   EXPECT_TRUE(session_peer.live_conversion_key_().empty());
   EXPECT_TRUE(session_peer.live_conversion_preedit_().empty());
+
+  ASSERT_TRUE(command.output().has_callback());
+  ASSERT_TRUE(command.output().callback().has_session_command());
+  EXPECT_EQ(command.output().callback().session_command().type(),
+            commands::SessionCommand::APPLY_LIVE_CONVERSION);
+  ASSERT_TRUE(command.output().callback().has_delay_millisec());
+  EXPECT_EQ(command.output().callback().delay_millisec(), 50);
 }
 
 TEST_F(SessionTest, LiveConversionHonorsRaisedMinKeyLength) {

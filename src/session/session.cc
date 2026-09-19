@@ -8373,7 +8373,7 @@ bool Session::Backspace(commands::Command* command) {
   if (context_->mutable_composer()->Empty()) {
     SetStateToPredompositionAndCancel(context_.get());
     Output(command);
-  } else if (MaybeStartLiveConversion(command)) {
+  } else if (MaybeScheduleLiveConversion(command)) {
     return true;
   } else if (Suggest(command->input())) {
     Output(command);
